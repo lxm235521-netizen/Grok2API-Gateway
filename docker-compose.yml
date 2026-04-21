@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # 1. 后端 API 服务
+  backend:
+    build: ./backend
+    container_name: grok-gateway-backend
+    environment:
+      # 请在此处填入外部数据库和 Redis 的连接地址
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:Lxm235521@外部IP:5432/postgres}
+      - REDIS_URL=${REDIS_URL:-redis://外部IP:6379/0}
+      - SECRET_KEY=${SECRET_KEY:-Lxm@235521_SECRET}
+    ports:
+      - "6006:6006"
+    restart: always
+
+  # 2. 前端网页服务 (Nginx)
+  frontend:
+    build: ./frontend
+    container_name: grok-gateway-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
