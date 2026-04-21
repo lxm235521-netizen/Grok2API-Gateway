@@ -5,7 +5,7 @@ import random
 import re
 from datetime import datetime
 from fastapi import APIRouter, Request, Depends, HTTPException, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from database import AsyncSessionLocal
@@ -124,7 +124,7 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
             # 注入余额 Header 并返回
             resp_headers = dict(response.headers)
             resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
-            return json.loads(response.content), response.status_code, resp_headers
+            return JSONResponse(content=resp_data, status_code=response.status_code, headers=resp_headers)
 
         # 非视频请求保持流式
         response = await client.send(req, stream=True)

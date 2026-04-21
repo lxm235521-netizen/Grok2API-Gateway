@@ -63,28 +63,34 @@
         </div>
       </template>
       <el-table :data="logs" style="width: 100%" size="default" stripe>
-        <el-table-column label="API Key" width="160">
+        <el-table-column label="API Key" width="150">
           <template #default="scope">
             <el-tooltip :content="scope.row.api_key?.key_value" placement="top">
               <span class="key-preview">{{ scope.row.api_key?.key_value?.substring(0, 12) }}...</span>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column prop="grok_server" label="目标节点" show-overflow-tooltip min-width="150" />
-        <el-table-column label="状态" width="80" align="center">
+        <el-table-column prop="grok_server" label="目标节点" show-overflow-tooltip min-width="180" />
+        <el-table-column label="状态" width="100" align="center">
           <template #default="scope">
             <el-tag :type="scope.row.is_success ? 'success' : 'danger'" size="small" @click="!scope.row.is_success && showDetail(scope.row)" class="status-tag">
               {{ scope.row.is_success ? '成功' : '失败' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="消耗" width="80" align="center">
-          <template #default="scope">{{ scope.row.quota_consumed.toFixed(1) }}</template>
+        <el-table-column label="错误信息" min-width="250" show-overflow-tooltip>
+          <template #default="scope">
+            <span v-if="!scope.row.is_success" class="error-msg">{{ scope.row.details || '未知错误' }}</span>
+            <span v-else>-</span>
+          </template>
         </el-table-column>
-        <el-table-column label="耗时" width="80" align="center">
+        <el-table-column label="耗时" width="100" align="center">
           <template #default="scope">{{ scope.row.duration.toFixed(1) }}s</template>
         </el-table-column>
-        <el-table-column prop="request_time" label="请求时间" width="170">
+        <el-table-column label="消耗" width="100" align="center">
+          <template #default="scope">{{ scope.row.quota_consumed.toFixed(1) }}</template>
+        </el-table-column>
+        <el-table-column prop="request_time" label="请求时间" width="170" align="center">
           <template #default="scope">{{ formatTime(scope.row.request_time) }}</template>
         </el-table-column>
       </el-table>
@@ -179,6 +185,7 @@ onMounted(fetchData);
 .card-header { display: flex; justify-content: space-between; align-items: center; border: none; }
 .header-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; color: #303133; }
 .server-code { background: #f4f4f5; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #606266; }
+.error-msg { color: #F56C6C; font-size: 13px; }
 .key-preview { color: #409EFF; font-weight: 500; }
 .status-tag { cursor: pointer; transition: opacity 0.2s; }
 .quota-value { color: #67C23A; font-weight: 600; }
