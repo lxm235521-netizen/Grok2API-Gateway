@@ -1,7 +1,14 @@
 <template>
   <div class="dashboard-container">
-    <!-- 统计卡片区 (保持不变) -->
+    <!-- 统计卡片区 -->
     <el-row :gutter="20" class="stat-cards">
+      <el-col :span="24" class="mb-15">
+        <el-radio-group v-model="statDays" @change="fetchData" size="small">
+          <el-radio-button :label="1">今日</el-radio-button>
+          <el-radio-button :label="7">近7天</el-radio-button>
+          <el-radio-button :label="30">近30天</el-radio-button>
+        </el-radio-group>
+      </el-col>
       <el-col :xs="12" :sm="12" :md="6" v-for="(item, index) in statItems" :key="index">
         <el-card shadow="hover" class="stat-card-modern" :class="item.type">
           <div class="card-content">
@@ -80,12 +87,6 @@
         <el-table-column prop="request_time" label="请求时间" width="170">
           <template #default="scope">{{ formatTime(scope.row.request_time) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="90" align="center">
-          <template #default="scope">
-            <el-button v-if="scope.row.is_success && scope.row.quota_consumed > 0" size="small" link type="primary" @click="playVideo(scope.row.details)">查看</el-button>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
       </el-table>
       
       <div class="pagination-container mt-20">
@@ -114,6 +115,7 @@ import { ElMessageBox, ElMessage } from 'element-plus';
 import { Refresh, Monitor, List, PieChart, VideoCamera, Warning, Wallet } from '@element-plus/icons-vue'
 
 const stats = ref({ total_count: 0, video_count: 0, fail_count: 0, balance: 0, server_stats: [] });
+const statDays = ref(1);
 const logs = ref([]);
 const totalLogs = ref(0);
 const currentPage = ref(1);
@@ -129,7 +131,7 @@ const statItems = [
 ];
 
 const fetchData = async () => {
-  const sData = await request.get('/admin/dashboard/stats');
+  const sData = await request.get('/admin/dashboard/stats', { params: { days: statDays.value } });
   stats.value = sData;
   fetchLogs();
 };
@@ -160,6 +162,7 @@ onMounted(fetchData);
 /* 保持之前的样式，增加分页容器样式 */
 .pagination-container { display: flex; justify-content: flex-end; }
 /* ... (其他样式同前) */
+.mb-15 { margin-bottom: 15px; }
 .dashboard-container { padding: 5px; }
 .stat-card-modern { border: none; border-radius: 12px; transition: all 0.3s cubic-bezier(.25,.8,.25,1); overflow: hidden; position: relative; margin-bottom: 15px; }
 .stat-card-modern:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important; }

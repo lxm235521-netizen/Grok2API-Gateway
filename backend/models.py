@@ -1,7 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+def get_beijing_time():
+    return datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None)
 
 class Base(DeclarativeBase):
     pass
@@ -14,7 +17,7 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="admin")  # super_admin, admin
     balance: Mapped[float] = mapped_column(Float, default=0.0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_beijing_time)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     keys = relationship("APIKey", back_populates="owner", cascade="all, delete-orphan")
@@ -27,7 +30,7 @@ class APIKey(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     initial_quota: Mapped[float] = mapped_column(Float)
     remaining_quota: Mapped[float] = mapped_column(Float)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_beijing_time)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -43,14 +46,14 @@ class GrokServer(Base):
     api_key: Mapped[str] = mapped_column(String(255))
     admin_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True) # 新增管理密码
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=get_beijing_time)
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"
     
     id: Mapped[int] = mapped_column(primary_key=True)
     key_id: Mapped[int] = mapped_column(ForeignKey("api_keys.id", ondelete="CASCADE"))
-    request_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    request_time: Mapped[datetime] = mapped_column(DateTime, default=get_beijing_time)
     grok_server: Mapped[str] = mapped_column(String(255))
     is_success: Mapped[bool] = mapped_column(Boolean)
     quota_consumed: Mapped[float] = mapped_column(Float)

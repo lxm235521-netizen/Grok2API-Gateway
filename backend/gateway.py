@@ -11,6 +11,8 @@ from sqlalchemy import select, update
 from database import AsyncSessionLocal
 import models
 
+from models import get_beijing_time
+
 router = APIRouter()
 
 async def refund_quota(key_value: str, amount: float):
@@ -34,7 +36,8 @@ async def record_log(key_id: int, server_url: str, is_success: bool, quota: floa
                 quota_consumed=quota if is_success else 0,
                 remaining_snapshot=api_key.remaining_quota,
                 duration=duration,
-                details=details
+                details=details,
+                request_time=get_beijing_time() # 强制记录北京时间
             )
             db.add(log)
             await db.commit()
@@ -93,50 +96,61 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
     client = httpx.AsyncClient(timeout=None)
     try:
         req = client.build_request(method=request.method, url=target_url, headers=headers, content=body)
-        response = await client.send(req, stream=True)
         
+        # 视频请求采用非流式处理（根据用户新要求）
+        if is_video:
+            response = await client.send(req)
+            resp_data = response.json()
+            duration = time.time() - start_time
+            
+            # 提取视频 URL
+            video_url = resp_data.get("url", "")
+            success = response.status_code < 400 and bool(video_url)
+            
+            if not success:
+                await refund_quota(incoming_key, quota)
+            
+            # 更新最后使用时间
+            async with AsyncSessionLocal() as db_time:
+                await db_time.execute(
+                    update(models.APIKey)
+                    .where(models.APIKey.id == key_id)
+                    .values(last_used_at=get_beijing_time())
+                )
+                await db_time.commit()
+            
+            await record_log(key_id, target_server.url, success, quota, duration, video_url or json.dumps(resp_data))
+            
+            # 注入余额 Header 并返回
+            resp_headers = dict(response.headers)
+            resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
+            return json.loads(response.content), response.status_code, resp_headers
+
+        # 非视频请求保持流式
+        response = await client.send(req, stream=True)
         async def stream_generator():
-            video_found = False
-            video_url = ""
             full_text = ""
             try:
                 async for chunk in response.aiter_bytes():
                     yield chunk
-                    if is_video and not video_found:
-                        decoded = chunk.decode(errors="ignore")
-                        full_text += decoded
-                        match = re.search(r'https?://[^\s]+\.mp4', full_text)
-                        if match:
-                            video_found = True
-                            video_url = match.group(0)
-
             except Exception as e:
                 full_text += f"\n[Gateway Error: {str(e)}]"
             finally:
                 await client.aclose()
                 duration = time.time() - start_time
-                success = response.status_code < 400 and (not is_video or video_found)
-                
-                log_details = video_url if video_found else full_text[-1000:]
-                if is_video and not video_found:
-                    await refund_quota(incoming_key, quota)
-                
-                # 更新 APIKey 的最后使用时间
-                async with AsyncSessionLocal() as db_time:
-                    await db_time.execute(
-                        update(models.APIKey)
-                        .where(models.APIKey.id == key_id)
-                        .values(last_used_at=datetime.now())
-                    )
-                    await db_time.commit()
-                
-                await record_log(key_id, target_server.url, success, quota, duration, log_details)
+                success = response.status_code < 400
+                await record_log(key_id, target_server.url, success, 0, duration, full_text[-500:])
 
-        # 注入余额 Header
         resp_headers = dict(response.headers)
         resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
-
         return StreamingResponse(stream_generator(), status_code=response.status_code, headers=resp_headers)
+
+    except Exception as e:
+        await client.aclose()
+        duration = time.time() - start_time
+        if is_video: await refund_quota(incoming_key, quota)
+        await record_log(key_id, target_server.url, False, quota, duration, str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
         await client.aclose()

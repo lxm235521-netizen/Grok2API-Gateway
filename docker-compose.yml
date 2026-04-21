@@ -6,6 +6,7 @@ services:
     build: ./backend
     container_name: grok-gateway-backend
     environment:
+      - TZ=Asia/Shanghai
       # 请在此处填入外部数据库和 Redis 的连接地址
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:password@外部IP:5432/postgres}
       - REDIS_URL=${REDIS_URL:-redis://外部IP:6379/0}

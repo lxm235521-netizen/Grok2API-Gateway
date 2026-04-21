@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import secrets
 import httpx
@@ -12,6 +12,8 @@ import schemas
 from database import get_db
 from auth import get_current_user, get_super_admin, get_password_hash
 
+from models import get_beijing_time
+
 router = APIRouter()
 
 # --- Grok2API 集群管理 (超管权限) ---
@@ -19,6 +21,7 @@ router = APIRouter()
 @router.post("/grok-servers", response_model=schemas.GrokServerResponse)
 async def create_grok_server(server_in: schemas.GrokServerCreate, admin: models.User = Depends(get_super_admin), db: AsyncSession = Depends(get_db)):
     db_server = models.GrokServer(**server_in.model_dump())
+    db_server.created_at = get_beijing_time()
     db.add(db_server)
     await db.commit()
     await db.refresh(db_server)
@@ -51,12 +54,13 @@ async def check_grok_server(server_id: int, admin: models.User = Depends(get_sup
             return {"status": "error", "token_count": -1, "detail": f"连接失败: {str(e)}"}
 
 @router.get("/dashboard/stats")
-async def get_dashboard_stats(current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_dashboard_stats(days: int = 1, current_user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from sqlalchemy import func
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # 根据 days 参数计算起始时间
+    target_date = get_beijing_time().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days-1)
     
     # 基础查询
-    base_query = select(models.UsageLog).filter(models.UsageLog.request_time >= today)
+    base_query = select(models.UsageLog).filter(models.UsageLog.request_time >= target_date)
     if current_user.role != "super_admin":
         base_query = base_query.join(models.APIKey).filter(models.APIKey.user_id == current_user.id)
     
@@ -76,7 +80,7 @@ async def get_dashboard_stats(current_user: models.User = Depends(get_current_us
             func.count(models.UsageLog.id).label("total"),
             func.count(models.UsageLog.id).filter(models.UsageLog.quota_consumed > 0, models.UsageLog.is_success == True).label("video"),
             func.count(models.UsageLog.id).filter(models.UsageLog.is_success == False).label("fail")
-        ).filter(models.UsageLog.request_time >= today).group_by(models.UsageLog.grok_server)
+        ).filter(models.UsageLog.request_time >= target_date).group_by(models.UsageLog.grok_server)
         
         s_res = await db.execute(s_query)
         for row in s_res.all():
