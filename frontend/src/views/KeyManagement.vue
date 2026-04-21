@@ -153,7 +153,36 @@ const fetchKeys = async () => {
   totalKeys.value = data.total;
 };
 
-const copyKey = (val) => { navigator.clipboard.writeText(val); ElMessage.success('已复制'); };
+const copyKey = (val) => {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(val).then(() => {
+      ElMessage.success('已复制');
+    }).catch(() => {
+      fallbackCopy(val);
+    });
+  } else {
+    fallbackCopy(val);
+  }
+};
+
+const fallbackCopy = (text) => {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  try {
+    const successful = document.execCommand('copy');
+    if (successful) ElMessage.success('已复制');
+    else ElMessage.error('复制失败');
+  } catch (err) {
+    ElMessage.error('浏览器暂不支持自动复制');
+  }
+  document.body.removeChild(textArea);
+};
 const formatTime = (t) => new Date(t).toLocaleString();
 
 const confirmAdd = async () => {
