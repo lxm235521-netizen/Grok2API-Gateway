@@ -110,6 +110,7 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
     clean_path = path.lstrip("/")
     target_url = f"{target_server.url}/{clean_path}" if clean_path.startswith("v1/") else f"{target_server.url}/v1/{clean_path}"
 
+    # Use client-level timeout; avoid passing timeout= to .send() for httpx compatibility.
     client = httpx.AsyncClient(timeout=None)
     try:
         req = client.build_request(method=request.method, url=target_url, headers=headers, content=body)
@@ -117,8 +118,14 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
         # 视频请求采用非流式处理（根据用户新要求）
         if is_video:
             try:
-                # 视频生成增加 500s 超时控制
-                response = await client.send(req, timeout=500.0)
+                # 视频生成增加 500s 超时控制（通过 request() 设置，避免 send(timeout=...) 兼容性问题）
+                response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    content=body,
+                    timeout=500.0,
+                )
                 
                 # 增加对空响应和异常 JSON 的保护
                 try:
