@@ -30,9 +30,11 @@ class UserResponse(UserBase):
 
 class APIKeyCreate(BaseModel):
     initial_quota: float = Field(..., gt=0)
+    note: Optional[str] = None
 
 class APIKeyUpdate(BaseModel):
-    quota_change: float # 正数为增加，负数为减少
+    quota_change: Optional[float] = None # 正数为增加，负数为减少
+    note: Optional[str] = None
 
 class APIKeyResponse(BaseModel):
     id: int
@@ -42,6 +44,7 @@ class APIKeyResponse(BaseModel):
     created_at: datetime
     last_used_at: Optional[datetime]
     is_active: bool
+    note: Optional[str] = None
     class Config:
         from_attributes = True
 

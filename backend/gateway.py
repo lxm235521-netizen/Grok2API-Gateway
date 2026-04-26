@@ -52,13 +52,30 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
     body = await request.body()
     
     # 1. Auth & Pre-charge
+    content_type = request.headers.get("Content-Type", "").lower()
     is_video = False
+    video_prompt = ""
     try:
         if request.method == "POST":
-            if "video" in path.lower(): is_video = True
-            elif "chat/completions" in path.lower():
+            # 路径包含 video 关键字
+            if "video" in path.lower(): 
+                is_video = True
+            
+            # 判定是否为视频生成请求 (支持 JSON 和 Form-data 两种方式)
+            if "application/json" in content_type:
                 js = json.loads(body.decode("utf-8", errors="ignore"))
-                if js.get("model") == "grok-imagine-1.0-video": is_video = True
+                if js.get("model") == "grok-imagine-1.0-video": 
+                    is_video = True
+                    video_prompt = js.get("prompt", "")
+            
+            elif "multipart/form-data" in content_type:
+                # 寻找 model 和 prompt 字段
+                if b'name="model"' in body and b"grok-imagine-1.0-video" in body:
+                    is_video = True
+                    # 提取 prompt 用于日志
+                    prompt_match = re.search(rb'name="prompt"\r\n\r\n(.*?)\r\n--', body, re.DOTALL)
+                    if prompt_match:
+                        video_prompt = prompt_match.group(1).decode("utf-8", errors="ignore")
     except: pass
 
     quota = 1.0 if is_video else 0.0
@@ -99,32 +116,62 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
         
         # 视频请求采用非流式处理（根据用户新要求）
         if is_video:
-            response = await client.send(req)
-            resp_data = response.json()
-            duration = time.time() - start_time
-            
-            # 提取视频 URL
-            video_url = resp_data.get("url", "")
-            success = response.status_code < 400 and bool(video_url)
-            
-            if not success:
+            try:
+                # 视频生成增加 500s 超时控制
+                response = await client.send(req, timeout=500.0)
+                
+                # 增加对空响应和异常 JSON 的保护
+                try:
+                    resp_data = response.json()
+                except Exception as e:
+                    resp_text = response.text
+                    duration = time.time() - start_time
+                    await refund_quota(incoming_key, quota)
+                    error_detail = f"JSON Decode Error: {str(e)} | Raw Response: {resp_text[:500]}"
+                    await record_log(key_id, target_server.url, False, quota, duration, error_detail)
+                    return JSONResponse(
+                        content={"error": "Upstream returned non-JSON response", "detail": error_detail},
+                        status_code=502
+                    )
+
+                duration = time.time() - start_time
+                
+                # 校验逻辑：status == completed 且有视频链接
+                video_url = resp_data.get("url", "")
+                video_status = resp_data.get("status", "")
+                
+                # 严格校验：必须 status == completed
+                success = response.status_code < 400 and video_status == "completed" and bool(video_url)
+                
+                if not success:
+                    await refund_quota(incoming_key, quota)
+                
+                # 更新最后使用时间
+                async with AsyncSessionLocal() as db_time:
+                    await db_time.execute(
+                        update(models.APIKey)
+                        .where(models.APIKey.id == key_id)
+                        .values(last_used_at=get_beijing_time())
+                    )
+                    await db_time.commit()
+                
+                await record_log(key_id, target_server.url, success, quota, duration, f"Prompt: {video_prompt} | URL: {video_url or json.dumps(resp_data)}")
+                
+                # 注入余额 Header 并返回
+                resp_headers = dict(response.headers)
+                resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
+                return JSONResponse(content=resp_data, status_code=response.status_code, headers=resp_headers)
+
+            except httpx.TimeoutException:
+                duration = time.time() - start_time
                 await refund_quota(incoming_key, quota)
-            
-            # 更新最后使用时间
-            async with AsyncSessionLocal() as db_time:
-                await db_time.execute(
-                    update(models.APIKey)
-                    .where(models.APIKey.id == key_id)
-                    .values(last_used_at=get_beijing_time())
+                await record_log(key_id, target_server.url, False, quota, duration, "Request timeout (500s)")
+                return JSONResponse(
+                    content={"error": "Video generation timeout", "detail": "Request exceeded 500 seconds"},
+                    status_code=504
                 )
-                await db_time.commit()
-            
-            await record_log(key_id, target_server.url, success, quota, duration, video_url or json.dumps(resp_data))
-            
-            # 注入余额 Header 并返回
-            resp_headers = dict(response.headers)
-            resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
-            return JSONResponse(content=resp_data, status_code=response.status_code, headers=resp_headers)
+            finally:
+                await client.aclose()
 
         # 非视频请求保持流式
         response = await client.send(req, stream=True)
@@ -144,13 +191,6 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
         resp_headers = dict(response.headers)
         resp_headers["X-Remaining-Quota"] = f"{remaining_quota:.2f}"
         return StreamingResponse(stream_generator(), status_code=response.status_code, headers=resp_headers)
-
-    except Exception as e:
-        await client.aclose()
-        duration = time.time() - start_time
-        if is_video: await refund_quota(incoming_key, quota)
-        await record_log(key_id, target_server.url, False, quota, duration, str(e))
-        raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
         await client.aclose()

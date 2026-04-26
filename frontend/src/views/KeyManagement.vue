@@ -15,6 +15,16 @@
             >
               <template #prefix><el-icon><Search /></el-icon></template>
             </el-input>
+            <el-input 
+              v-model="noteQuery" 
+              placeholder="搜索备注..." 
+              class="search-input" 
+              clearable 
+              @clear="fetchKeys" 
+              @keyup.enter="fetchKeys"
+            >
+              <template #prefix><el-icon><Edit /></el-icon></template>
+            </el-input>
             <el-button type="primary" @click="showAddDialog = true">新建密钥</el-button>
           </div>
         </div>
@@ -27,6 +37,7 @@
             <el-button link type="primary" icon="CopyDocument" @click="copyKey(scope.row.key_value)" style="margin-left: 8px;" />
           </template>
         </el-table-column>
+        <el-table-column prop="note" label="备注" width="150" show-overflow-tooltip />
         <el-table-column label="可用 / 初始额度" width="180">
           <template #default="scope">
             <span :class="scope.row.remaining_quota < 1 ? 'text-danger' : 'text-success'" style="font-weight: bold;">
@@ -43,7 +54,7 @@
         </el-table-column>
         <el-table-column label="操作" width="280">
           <template #default="scope">
-            <el-button size="small" @click="handleEditQuota(scope.row)">额度</el-button>
+            <el-button size="small" @click="handleEditKey(scope.row)">编辑</el-button>
             <el-button size="small" @click="showLogs(scope.row)">流水</el-button>
             <el-button size="small" type="danger" @click="handleDelete(scope.row)">移除</el-button>
           </template>
@@ -66,6 +77,9 @@
     <!-- 新建密钥对话框 (统一风格) -->
     <el-dialog v-model="showAddDialog" title="新建 API 密钥" width="500px">
       <el-form :model="addForm" label-width="120px">
+        <el-form-item label="备注">
+          <el-input v-model="addForm.note" placeholder="请输入备注信息（可选）" />
+        </el-form-item>
         <el-form-item label="初始额度">
           <el-input-number v-model="addForm.initial_quota" :min="1" style="width: 100%" />
         </el-form-item>
@@ -80,13 +94,16 @@
     </el-dialog>
 
     <!-- 额度调整对话框 (统一风格) -->
-    <el-dialog v-model="showEditDialog" title="密钥额度调整" width="500px">
+    <el-dialog v-model="showEditDialog" title="密钥信息修改" width="500px">
       <el-form label-width="120px">
+        <el-form-item label="备注">
+          <el-input v-model="editForm.note" placeholder="修改备注" />
+        </el-form-item>
         <el-form-item label="当前剩余">
           <el-input :value="selectedKey?.remaining_quota.toFixed(1)" disabled />
         </el-form-item>
         <el-form-item label="调整数额">
-          <el-input-number v-model="quotaChange" :precision="1" style="width: 100%" />
+          <el-input-number v-model="editForm.quota_change" :precision="1" style="width: 100%" />
         </el-form-item>
         <div style="margin-left: 120px; color: #909399; font-size: 12px; margin-top: -10px;">
           正数为增加（扣除您余额），负数为减少（退回您余额）。
@@ -94,7 +111,7 @@
       </el-form>
       <template #footer>
         <el-button @click="showEditDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmEditQuota" :loading="btnLoading">确定</el-button>
+        <el-button type="primary" @click="confirmEditKey" :loading="btnLoading">确定</el-button>
       </template>
     </el-dialog>
 
@@ -122,24 +139,25 @@
 import { ref, onMounted, watch } from 'vue';
 import request from '../utils/request';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Search, CopyDocument } from '@element-plus/icons-vue'
+import { Search, CopyDocument, Edit } from '@element-plus/icons-vue'
 
 const keyList = ref([]);
 const totalKeys = ref(0);
 const currentPage = ref(1);
 const pageSize = ref(10);
 const searchQuery = ref('');
+const noteQuery = ref('');
 const showAddDialog = ref(false);
 const showEditDialog = ref(false);
 const showLogsDrawer = ref(false);
 const btnLoading = ref(false);
 const selectedKey = ref(null);
-const quotaChange = ref(0);
-const addForm = ref({ initial_quota: 100 });
+const editForm = ref({ quota_change: 0, note: '' });
+const addForm = ref({ initial_quota: 100, note: '' });
 const keyLogs = ref([]);
 
 let searchTimer = null;
-watch(searchQuery, () => {
+watch([searchQuery, noteQuery], () => {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     currentPage.value = 1;
@@ -148,7 +166,14 @@ watch(searchQuery, () => {
 });
 
 const fetchKeys = async () => {
-  const data = await request.get('/admin/keys', { params: { page: currentPage.value, size: pageSize.value, query: searchQuery.value } });
+  const data = await request.get('/admin/keys', { 
+    params: { 
+      page: currentPage.value, 
+      size: pageSize.value, 
+      query: searchQuery.value,
+      note: noteQuery.value
+    } 
+  });
   keyList.value = data.items;
   totalKeys.value = data.total;
 };
@@ -195,17 +220,25 @@ const confirmAdd = async () => {
   } finally { btnLoading.value = false; }
 };
 
-const handleEditQuota = (row) => {
+const handleEditKey = (row) => {
   selectedKey.value = row;
-  quotaChange.value = 0;
+  editForm.value = { 
+    quota_change: 0, 
+    note: row.note || '' 
+  };
   showEditDialog.value = true;
 };
 
-const confirmEditQuota = async () => {
+const confirmEditKey = async () => {
   btnLoading.value = true;
   try {
-    await request.patch(`/admin/keys/${selectedKey.value.id}`, { quota_change: quotaChange.value });
-    ElMessage.success('调整成功');
+    // 确保发送的数据结构正确
+    const payload = {
+      note: editForm.value.note,
+      quota_change: editForm.value.quota_change
+    };
+    await request.patch(`/admin/keys/${selectedKey.value.id}`, payload);
+    ElMessage.success('更新成功');
     showEditDialog.value = false;
     fetchKeys();
   } finally { btnLoading.value = false; }

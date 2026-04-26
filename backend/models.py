@@ -33,6 +33,7 @@ class APIKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=get_beijing_time)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     owner = relationship("User", back_populates="keys")
     logs = relationship("UsageLog", back_populates="api_key", cascade="all, delete-orphan")

@@ -67,8 +67,14 @@ async def get_dashboard_stats(days: int = 1, current_user: models.User = Depends
     # 基础统计
     total_res = await db.execute(select(func.count()).select_from(base_query.subquery()))
     total_count = total_res.scalar() or 0
-    video_res = await db.execute(select(func.count()).select_from(base_query.filter(models.UsageLog.quota_consumed > 0, models.UsageLog.is_success == True).subquery()))
-    video_count = video_res.scalar() or 0
+    
+    # 视频专用统计 (消耗大于0的请求)
+    video_res = await db.execute(select(func.count()).select_from(base_query.filter(models.UsageLog.quota_consumed > 0).subquery()))
+    video_total_count = video_res.scalar() or 0
+    
+    video_success_res = await db.execute(select(func.count()).select_from(base_query.filter(models.UsageLog.quota_consumed > 0, models.UsageLog.is_success == True).subquery()))
+    video_success_count = video_success_res.scalar() or 0
+    
     fail_res = await db.execute(select(func.count()).select_from(base_query.filter(models.UsageLog.is_success == False).subquery()))
     fail_count = fail_res.scalar() or 0
 
@@ -78,7 +84,7 @@ async def get_dashboard_stats(days: int = 1, current_user: models.User = Depends
         s_query = select(
             models.UsageLog.grok_server,
             func.count(models.UsageLog.id).label("total"),
-            func.count(models.UsageLog.id).filter(models.UsageLog.quota_consumed > 0, models.UsageLog.is_success == True).label("video"),
+            func.count(models.UsageLog.id).filter(models.UsageLog.quota_consumed > 0, models.UsageLog.is_success == True).label("video_success"),
             func.count(models.UsageLog.id).filter(models.UsageLog.is_success == False).label("fail")
         ).filter(models.UsageLog.request_time >= target_date).group_by(models.UsageLog.grok_server)
         
@@ -87,13 +93,14 @@ async def get_dashboard_stats(days: int = 1, current_user: models.User = Depends
             server_stats.append({
                 "server": row[0],
                 "total": row[1],
-                "video": row[2],
+                "video_success": row[2],
                 "fail": row[3]
             })
     
     return {
         "total_count": total_count,
-        "video_count": video_count,
+        "video_count": video_total_count,
+        "video_success_count": video_success_count,
         "fail_count": fail_count,
         "balance": current_user.balance if current_user.role != "super_admin" else -1,
         "server_stats": server_stats
@@ -234,20 +241,28 @@ async def create_key(key_in: schemas.APIKeyCreate, user: models.User = Depends(g
     if user.balance < key_in.initial_quota:
         raise HTTPException(status_code=400, detail="账户余额不足，无法创建此额度的密钥")
     user.balance -= key_in.initial_quota
-    new_key = models.APIKey(key_value=f"sk-{secrets.token_hex(24)}", user_id=user.id, initial_quota=key_in.initial_quota, remaining_quota=key_in.initial_quota)
+    new_key = models.APIKey(
+        key_value=f"sk-{secrets.token_hex(24)}", 
+        user_id=user.id, 
+        initial_quota=key_in.initial_quota, 
+        remaining_quota=key_in.initial_quota,
+        note=key_in.note
+    )
     db.add(new_key)
     await db.commit()
     await db.refresh(new_key)
     return new_key
 
 @router.get("/keys")
-async def list_keys(page: int = 1, size: int = 10, query: Optional[str] = None, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_keys(page: int = 1, size: int = 10, query: Optional[str] = None, note: Optional[str] = None, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = select(models.APIKey)
     if user.role != "super_admin":
         stmt = stmt.filter(models.APIKey.user_id == user.id)
     
     if query:
         stmt = stmt.filter(models.APIKey.key_value.contains(query))
+    if note:
+        stmt = stmt.filter(models.APIKey.note.contains(note))
     
     total_res = await db.execute(select(func.count()).select_from(stmt.subquery()))
     total = total_res.scalar() or 0
@@ -268,23 +283,34 @@ async def delete_key(key_id: int, user: models.User = Depends(get_current_user),
     return {"message": f"密钥已删除，已将 {refund_amount} 额度退回至用户 {owner.username} 账户"}
 
 @router.patch("/keys/{key_id}", response_model=schemas.APIKeyResponse)
-async def update_key_quota(key_id: int, update_data: schemas.APIKeyUpdate, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    api_key = await db.get(models.APIKey, key_id)
+async def update_key(key_id: int, update_data: schemas.APIKeyUpdate, user: models.User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # 使用 select ... with_for_update 确保对象被正确加载到 session
+    result = await db.execute(select(models.APIKey).filter(models.APIKey.id == key_id))
+    api_key = result.scalar_one_or_none()
+    
     if not api_key: raise HTTPException(status_code=404, detail="Key not found")
     if user.role != "super_admin" and api_key.user_id != user.id: raise HTTPException(status_code=403, detail="Unauthorized")
+    
     owner = await db.get(models.User, api_key.user_id)
-    change = update_data.quota_change
-    if change > 0:
-        if owner.balance < change: raise HTTPException(status_code=400, detail="账户余额不足")
-        owner.balance -= change
-        api_key.remaining_quota += change
-        api_key.initial_quota += change
-    elif change < 0:
-        abs_change = abs(change)
-        if api_key.remaining_quota < abs_change: raise HTTPException(status_code=400, detail="减少数额不能超过密钥剩余额度")
-        api_key.remaining_quota -= abs_change
-        api_key.initial_quota -= abs_change
-        owner.balance += abs_change
+    
+    if update_data.quota_change is not None and update_data.quota_change != 0:
+        change = update_data.quota_change
+        if change > 0:
+            if owner.balance < change: raise HTTPException(status_code=400, detail="账户余额不足")
+            owner.balance -= change
+            api_key.remaining_quota += change
+            api_key.initial_quota += change
+        elif change < 0:
+            abs_change = abs(change)
+            if api_key.remaining_quota < abs_change: raise HTTPException(status_code=400, detail="减少数额不能超过密钥剩余额度")
+            api_key.remaining_quota -= abs_change
+            api_key.initial_quota -= abs_change
+            owner.balance += abs_change
+            
+    if update_data.note is not None:
+        api_key.note = update_data.note
+        print(f"DEBUG: Updating key {key_id} note to: {update_data.note}")
+
     await db.commit()
     await db.refresh(api_key)
     return api_key
