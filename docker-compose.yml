@@ -8,9 +8,9 @@ services:
     environment:
       - TZ=Asia/Shanghai
       # 请在此处填入外部数据库和 Redis 的连接地址
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:Lxm235521@154.12.51.117:5432/postgres}
-      - REDIS_URL=${REDIS_URL:-redis://154.12.51.117:6379/0}
-      - SECRET_KEY=${SECRET_KEY:-Lxm@235521_SECRET}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:password@IP:5432/postgres}
+      - REDIS_URL=${REDIS_URL:-redis://IP:6379/0}
+      - SECRET_KEY=${SECRET_KEY:-password_SECRET}
     ports:
       - "6006:6006"
     restart: always
