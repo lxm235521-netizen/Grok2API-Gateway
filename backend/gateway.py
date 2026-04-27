@@ -105,6 +105,10 @@ async def proxy_gateway(path: str, request: Request, authorization: str = Header
     headers = dict(request.headers)
     headers.pop("host", None)
     headers.pop("authorization", None)
+    # Avoid forwarding hop-by-hop / transport-level headers; let httpx compute them.
+    headers.pop("content-length", None)
+    headers.pop("transfer-encoding", None)
+    headers.pop("connection", None)
     headers["Authorization"] = f"Bearer {target_server.api_key}"
     
     clean_path = path.lstrip("/")

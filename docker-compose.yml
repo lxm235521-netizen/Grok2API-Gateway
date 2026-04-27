@@ -8,8 +8,8 @@ services:
     environment:
       - TZ=Asia/Shanghai
       # 请在此处填入外部数据库和 Redis 的连接地址
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:Lxm235521@172.17.0.1:5432/postgres}
-      - REDIS_URL=${REDIS_URL:-redis://172.17.0.1:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:Lxm235521@154.12.51.117:5432/postgres}
+      - REDIS_URL=${REDIS_URL:-redis://154.12.51.117:6379/0}
       - SECRET_KEY=${SECRET_KEY:-Lxm@235521_SECRET}
     ports:
       - "6006:6006"
@@ -19,10 +19,8 @@ services:
   frontend:
     build: ./frontend
     container_name: grok-gateway-frontend
-    environment:
-      - TZ=Asia/Shanghai
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - backend
     restart: always
